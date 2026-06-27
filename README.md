@@ -7,7 +7,7 @@
 
 A web-based interface for the open-source load testing tool [k6](https://k6.io/). Describe a performance test in plain English, and the application generates, executes, and analyzes it using your choice of AI model.
 
-![Results Dashboard](assets/screenshot-results.png)
+![Results Dashboard](assets/screenshots/results.png)
 
 ## Features
 

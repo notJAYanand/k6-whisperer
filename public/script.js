@@ -91,7 +91,7 @@ async function runScript() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Failed to run script.');
 
-        lastTestResults = data.results;      
+        lastTestResults = data.results;
         document.getElementById('rawOutput').textContent = data.summary;
 
         const failedRate = data.results?.metrics?.http_req_failed?.value ?? null;
@@ -216,11 +216,11 @@ function destroyChart(id) {
 }
 
 function renderMetricCards(metrics) {
-    const totalReqs  = metrics.http_reqs?.count ?? 'N/A';
-    const rps        = metrics.http_reqs?.rate?.toFixed(2) ?? 'N/A';
+    const totalReqs = metrics.http_reqs?.count ?? 'N/A';
+    const rps = metrics.http_reqs?.rate?.toFixed(2) ?? 'N/A';
     const failedRate = metrics.http_req_failed?.value ?? null;
-    const errorRate  = failedRate != null ? (failedRate * 100).toFixed(2) + '%' : 'N/A';
-    const p95        = metrics.http_req_duration?.['p(95)'] != null
+    const errorRate = failedRate != null ? (failedRate * 100).toFixed(2) + '%' : 'N/A';
+    const p95 = metrics.http_req_duration?.['p(95)'] != null
         ? metrics.http_req_duration['p(95)'].toFixed(0) + ' ms'
         : 'N/A';
 
@@ -243,7 +243,7 @@ function renderPercentileChart(metrics) {
     const values = metrics.http_req_duration;
     if (!values) return;
 
-    const data = [values.avg, values.med, values['p(90)'], values['p(95)'], values['p(99)'], values.max]
+    const data = [values.avg, values.med, values['p(90)'], values['p(95)'], values.max]
         .map(v => v != null ? parseFloat(v.toFixed(2)) : 0);
 
     destroyChart('percentileChart');
@@ -252,7 +252,7 @@ function renderPercentileChart(metrics) {
         {
             type: 'bar',
             data: {
-                labels: ['Avg', 'Median', 'p(90)', 'p(95)', 'p(99)', 'Max'],
+                labels: ['Avg', 'Median', 'p(90)', 'p(95)', 'Max'],
                 datasets: [{
                     label: 'ms',
                     data,

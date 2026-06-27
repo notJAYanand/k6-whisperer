@@ -4,3 +4,7 @@ node_modules/
 # Utility Files
 /temp_test.js
 /results.json
+
+# Environment files
+temp/
+.env

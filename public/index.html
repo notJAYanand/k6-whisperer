@@ -1,42 +1,84 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <title>AI k6 Test Generator</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>k6 Whisperer — AI-Powered Load Testing</title>
+    <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-    <h1>Describe Your Performance Test</h1>
-    <textarea id="prompt-input" rows="4" cols="50"
-        placeholder="e.g., 'Run a 1-minute test on test.k6.io with 20 virtual users.'"></textarea>
-    <br>
-    <button onclick="generateScript()">Generate Script</button>
-    <div id="results">
-        <h3>Generated Script (Editable):</h3>
-        <textarea id="generatedScript" rows="20" cols="100" style="font-family: monospace;"></textarea><br><br>
-        <button onclick="runScript()">Run This Script</button>
-        <button onclick="regenerateScript()">Regenerate Script</button>
-    </div>
+    <header>
+        <h1>k6 Whisperer</h1>
+        <p>Describe your performance test in plain English. AI generates, executes, and analyzes it.</p>
+    </header>
 
-    <div id="results">
-        <h4>Test Results:</h4>
-        <pre id="summary"></pre>
+    <main>
+        <section class="card" id="promptSection">
+            <h2>1. Describe Your Test</h2>
+            <textarea id="promptInput" placeholder="e.g., 'Run a stress test on https://test.k6.io with 20 virtual users for 30 seconds.'"></textarea>
+            <div class="sample-prompts">
+                <span class="label">Try an example:</span>
+                <button class="chip" onclick="setPrompt('basic-load')">Basic Load Test</button>
+                <button class="chip" onclick="setPrompt('stress-ramp')">Stress with Ramp-Up</button>
+                <button class="chip" onclick="setPrompt('post-checks')">POST with Checks</button>
+                <button class="chip" onclick="setPrompt('thresholds')">With Thresholds</button>
+            </div>
+            <div class="actions">
+                <button class="btn btn-primary" id="generateBtn" onclick="generateScript()">Generate Script</button>
+            </div>
+            <div id="generateError" class="error-message" hidden></div>
+        </section>
 
-        <div id="analysisSection">
-            <h4>AI Analysis:</h4>
-            <button id="getAnalysisBtn" onclick="getAnalysis()">Get AI Analysis</button>
-            <div id="analysis" style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 3px;"></div>
-        </div>
+        <section class="card" id="scriptSection" hidden>
+            <div class="section-header">
+                <h2>2. Review &amp; Edit Script</h2>
+                <button class="btn btn-ghost" id="copyBtn" onclick="copyScript()">Copy</button>
+            </div>
+            <textarea id="generatedScript" class="code-editor" spellcheck="false"></textarea>
+            <div class="actions">
+                <button class="btn btn-primary" id="runBtn" onclick="runScript()">Run Test</button>
+                <button class="btn btn-secondary" onclick="generateScript()">Regenerate</button>
+            </div>
+            <div id="runError" class="error-message" hidden></div>
+        </section>
 
-        <div id="comprehensiveAnalysisSection">
-            <h4>Comprehensive AI Analysis:</h4>
-            <button id="getComprehensiveAnalysisBtn" onclick="getComprehensiveAnalysis()">Get Comprehensive AI
-                Analysis</button>
-            <div id="comprehensiveAnalysis"
-                style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 3px;"></div>
-        </div>
-    </div>
+        <section class="card" id="resultsSection" hidden>
+            <h2>3. Results</h2>
+            <div class="results-status" id="resultsStatus"></div>
+            <details>
+                <summary>Raw k6 Output</summary>
+                <pre id="rawOutput"></pre>
+            </details>
+
+            <div class="analysis-block">
+                <div class="analysis-header">
+                    <h3>AI Summary</h3>
+                    <button class="btn btn-secondary" id="getAnalysisBtn" onclick="getAnalysis()">Get AI Summary</button>
+                </div>
+                <div id="analysis" class="analysis-content"></div>
+            </div>
+
+            <div class="analysis-block">
+                <div class="analysis-header">
+                    <h3>Comprehensive Analysis</h3>
+                    <button class="btn btn-secondary" id="getComprehensiveAnalysisBtn" onclick="getComprehensiveAnalysis()">Get Comprehensive Analysis</button>
+                </div>
+                <div id="comprehensiveAnalysis" class="analysis-content"></div>
+            </div>
+        </section>
+
+        <section class="card" id="modelSection">
+            <h2>Model Selection</h2>
+            <div class="model-selector">
+                <label class="label" for="modelSelect">Model:</label>
+                <select id="modelSelect">
+                    <option value="">Loading models...</option>
+                </select>
+                <span id="modelDescription" class="model-description"></span>
+            </div>
+        </section>
+    </main>
+
     <script src="script.js"></script>
 </body>
-
 </html>

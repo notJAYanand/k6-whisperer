@@ -115,60 +115,73 @@ User's request: "${userPrompt}"`;
 }
 
 function buildSimpleAnalysisPrompt(resultsJson) {
-    return `You are a performance testing expert. Analyze the following k6 JSON output and provide a brief, human-readable summary.
+    return `You are a performance testing expert. Analyze the following k6 JSON summary and provide a brief, human-readable summary.
 
-Follow these rules strictly:
-1. Start with a one-sentence conclusion: "Conclusion: The test passed successfully." or "Conclusion: The test failed."
-2. To determine pass/fail, check the "http_req_failed" metric's "values.rate" property. If "rate" is 0, the test passed. If not 0, it failed.
-3. Report the requests per second from the "http_reqs" metric's "rate" property.
-4. Report the 95th percentile response time from the "http_req_duration" metric's "p(95)" property.
+CRITICAL INSTRUCTION — Pass/Fail determination:
+The JSON contains a metric called "http_req_failed". Look at its "values" object and find the "rate" key.
+- "rate" is a decimal between 0 and 1 representing the FAILURE rate.
+- If "rate" is 0 (or 0.0), it means ZERO requests failed — the test PASSED.
+- If "rate" is greater than 0, it means some requests failed — the test FAILED.
+- The "passes" and "fails" keys inside "values" refer to the number of times the rate metric was evaluated, NOT the number of HTTP requests that succeeded or failed. Do not use them for pass/fail.
 
-Here is the JSON data to analyze: ${resultsJson}`;
+Follow these rules:
+1. Start with: "Conclusion: The test passed successfully." or "Conclusion: The test failed."
+2. Report the requests per second from http_reqs → values → rate.
+3. Report the 95th percentile response time from http_req_duration → values → "p(95)".
+
+Here is the JSON data: ${resultsJson}`;
 }
 
 function buildComprehensiveAnalysisPrompt(resultsJson) {
-    return `Provide a comprehensive analysis of this k6 performance test result, covering:
+    return `You are a performance testing expert. Analyze the following k6 JSON summary and provide a comprehensive analysis.
+
+CRITICAL INSTRUCTION — Pass/Fail determination:
+The JSON contains a metric called "http_req_failed". Look at its "values" object and find the "rate" key.
+- "rate" is a decimal between 0 and 1 representing the FAILURE rate.
+- If "rate" is 0 (or 0.0), the error rate is 0% and the test PASSED.
+- If "rate" is greater than 0 (e.g. 0.25 = 25% failure rate), the test FAILED.
+- Do NOT use "passes" or "fails" keys inside "values" to count HTTP successes/failures. They are internal rate-metric counters, not request counts.
+- The total HTTP request count is found at http_reqs → values → count.
+
+Provide a comprehensive analysis covering:
 
 Test Overview & Configuration
 - Test duration, virtual user count, and execution strategy
-- Test completion status and overall success/failure assessment
+- Overall pass/fail verdict with the exact error rate percentage
 
-Core Performance Metrics Analysis
-- http_reqs: Total requests and request rate (RPS)
-- http_req_failed: Error rate percentage and absolute numbers
-- http_req_duration: Full breakdown including avg, min, max, p(90), p(95), p(99) percentiles
+Core Performance Metrics
+- http_reqs: total count and requests per second (values.rate)
+- http_req_failed: exact failure rate percentage (values.rate × 100)
+- http_req_duration: avg, min, max, p(90), p(95), p(99)
 
-Response Time Breakdown:
-- http_req_blocked: Time waiting for TCP connection slots
+Response Time Breakdown
+- http_req_blocked: time waiting for a TCP connection slot
 - http_req_connecting: TCP connection establishment time
-- http_req_tls_handshaking: TLS negotiation time (if applicable)
-- http_req_sending: Data transmission time to server
-- http_req_waiting: Time to first byte (TTFB)
-- http_req_receiving: Response data reception time
+- http_req_tls_handshaking: TLS negotiation time (if present)
+- http_req_sending: time to send data to the server
+- http_req_waiting: time to first byte (TTFB)
+- http_req_receiving: response download time
 
-System Resource & Load Analysis:
-- vus / vus_max: Virtual user counts throughout the test
-- iterations: Total completed iterations and iteration rate
-- data_received / data_sent: Transfer rates
+Load & Resource Analysis
+- vus / vus_max: virtual user utilization
+- iterations: total count and rate
+- data_received / data_sent: transfer volumes and rates
 
-Quality & Reliability Assessment:
-- checks: Success rate of assertions
-- Any failed checks with root cause analysis
+Quality Assessment
+- checks: pass rate of assertions (if present in the JSON)
 
-Performance Bottleneck Identification:
-- Slowest components in the request lifecycle
-- Response time percentile outliers
-- Network vs. server-side performance
+Performance Bottleneck Identification
+- Slowest lifecycle component
+- Percentile spread (gap between p(90) and p(99) indicates tail latency issues)
 
-Business Impact & Recommendations:
-- Performance against standard industry SLA criteria
-- Scalability insights
-- Specific optimization recommendations
-- Threshold suggestions for future tests
+Recommendations
+- Comparison against industry SLA standards (p(95) < 500ms, error rate < 1%)
+- Specific optimization suggestions
+- Suggested threshold values for future test runs
 
-Format with clear sections. Do not return raw markdown — use plain text with spacing.
+Format with clear section headers. Use plain text, not markdown.
 
-Here is the JSON data to analyze: ${resultsJson}`;
+Here is the JSON data: ${resultsJson}`;
 }
 
 // --- Helpers ---

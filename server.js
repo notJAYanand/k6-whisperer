@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const util = require('util');
 
 const execPromise = util.promisify(exec);
@@ -14,26 +15,83 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const TEMP_DIR = path.join(__dirname, 'temp');
 
-// Initialize the AI client once at startup
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+if (!fs.existsSync(TEMP_DIR)) {
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
+
+// --- Provider clients (initialized once at startup) ---
+
+const googleClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const groqClient = process.env.GROQ_API_KEY
+    ? new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' })
+    : null;
+
+const openRouterClient = process.env.OPENROUTER_API_KEY
+    ? new OpenAI({ apiKey: process.env.OPENROUTER_API_KEY, baseURL: 'https://openrouter.ai/api/v1' })
+    : null;
+
+const ollamaClient = new OpenAI({
+    apiKey: 'ollama',
+    baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+});
+
+// --- Model registry ---
 
 const SUPPORTED_MODELS = {
-    'gemini-2.0-flash':     { label: 'Gemini 2.0 Flash',    description: 'Fast and efficient' },
-    'gemini-2.5-flash':     { label: 'Gemini 2.5 Flash',    description: 'Latest flash model' },
-    'gemini-2.5-pro':       { label: 'Gemini 2.5 Pro',      description: 'Most capable, slower' },
-    'gemini-1.5-flash':     { label: 'Gemini 1.5 Flash',    description: 'Stable and fast' },
-    'gemini-1.5-pro':       { label: 'Gemini 1.5 Pro',      description: 'Stable, high quality' },
+    // Google Gemini
+    'gemini-2.0-flash': { provider: 'google',      apiModel: 'gemini-2.0-flash',                              label: 'Gemini 2.0 Flash',      description: 'Google · Fast & capable',      requiresKey: 'GEMINI_API_KEY' },
+    'gemini-2.5-flash': { provider: 'google',      apiModel: 'gemini-2.5-flash',                              label: 'Gemini 2.5 Flash',      description: 'Google · Latest flash',        requiresKey: 'GEMINI_API_KEY' },
+    'gemini-2.5-pro':   { provider: 'google',      apiModel: 'gemini-2.5-pro',                                label: 'Gemini 2.5 Pro',        description: 'Google · Most capable',        requiresKey: 'GEMINI_API_KEY' },
+    'gemini-1.5-flash': { provider: 'google',      apiModel: 'gemini-1.5-flash',                              label: 'Gemini 1.5 Flash',      description: 'Google · Stable & fast',       requiresKey: 'GEMINI_API_KEY' },
+    'gemini-1.5-pro':   { provider: 'google',      apiModel: 'gemini-1.5-pro',                                label: 'Gemini 1.5 Pro',        description: 'Google · Stable, high quality',requiresKey: 'GEMINI_API_KEY' },
+
+    // Groq (free tier)
+    'groq/llama-3.3-70b': { provider: 'groq',      apiModel: 'llama-3.3-70b-versatile',                      label: 'Llama 3.3 70B',         description: 'Groq · Free · Very fast',      requiresKey: 'GROQ_API_KEY' },
+    'groq/llama-3.1-8b':  { provider: 'groq',      apiModel: 'llama-3.1-8b-instant',                         label: 'Llama 3.1 8B',          description: 'Groq · Free · Fastest',        requiresKey: 'GROQ_API_KEY' },
+    'groq/gemma2-9b':     { provider: 'groq',      apiModel: 'gemma2-9b-it',                                  label: 'Gemma 2 9B',            description: 'Groq · Free · Google model',   requiresKey: 'GROQ_API_KEY' },
+
+    // OpenRouter (free models)
+    'openrouter/llama-3.1-8b': { provider: 'openrouter', apiModel: 'meta-llama/llama-3.1-8b-instruct:free',  label: 'Llama 3.1 8B',          description: 'OpenRouter · Free',            requiresKey: 'OPENROUTER_API_KEY' },
+    'openrouter/mistral-7b':   { provider: 'openrouter', apiModel: 'mistralai/mistral-7b-instruct:free',     label: 'Mistral 7B',            description: 'OpenRouter · Free',            requiresKey: 'OPENROUTER_API_KEY' },
+
+    // Ollama (fully local — no key needed)
+    'ollama/llama3':    { provider: 'ollama', apiModel: 'llama3',    label: 'Llama 3 (Local)',    description: 'Ollama · Free · Local',        requiresKey: null },
+    'ollama/codellama': { provider: 'ollama', apiModel: 'codellama', label: 'CodeLlama (Local)', description: 'Ollama · Free · Code-focused', requiresKey: null },
+    'ollama/mistral':   { provider: 'ollama', apiModel: 'mistral',   label: 'Mistral (Local)',   description: 'Ollama · Free · Local',        requiresKey: null },
 };
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
-function getModel(modelId) {
-    const id = SUPPORTED_MODELS[modelId] ? modelId : DEFAULT_MODEL;
-    return genAI.getGenerativeModel({ model: id });
+function isModelAvailable(modelId) {
+    const config = SUPPORTED_MODELS[modelId];
+    if (!config) return false;
+    if (!config.requiresKey) return true;
+    return !!process.env[config.requiresKey];
 }
 
-if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
+async function generateText(modelId, prompt) {
+    const config = SUPPORTED_MODELS[modelId] || SUPPORTED_MODELS[DEFAULT_MODEL];
+
+    if (config.provider === 'google') {
+        const model = googleClient.getGenerativeModel({ model: config.apiModel });
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+    }
+
+    const clients = { groq: groqClient, openrouter: openRouterClient, ollama: ollamaClient };
+    const client = clients[config.provider];
+
+    if (!client) {
+        throw new Error(`Provider '${config.provider}' is not configured. Add the required API key to your .env file.`);
+    }
+
+    const result = await client.chat.completions.create({
+        model: config.apiModel,
+        messages: [{ role: 'user', content: prompt }],
+    });
+
+    return result.choices[0].message.content;
 }
 
 app.use(express.json());
@@ -57,60 +115,73 @@ User's request: "${userPrompt}"`;
 }
 
 function buildSimpleAnalysisPrompt(resultsJson) {
-    return `You are a performance testing expert. Analyze the following k6 JSON output and provide a brief, human-readable summary.
+    return `You are a performance testing expert. Analyze the following k6 JSON summary and provide a brief, human-readable summary.
 
-Follow these rules strictly:
-1. Start with a one-sentence conclusion: "Conclusion: The test passed successfully." or "Conclusion: The test failed."
-2. To determine pass/fail, check the "http_req_failed" metric's "values.rate" property. If "rate" is 0, the test passed. If not 0, it failed.
-3. Report the requests per second from the "http_reqs" metric's "rate" property.
-4. Report the 95th percentile response time from the "http_req_duration" metric's "p(95)" property.
+CRITICAL INSTRUCTION — Pass/Fail determination:
+The JSON contains a metric called "http_req_failed". Look at its "values" object and find the "rate" key.
+- "rate" is a decimal between 0 and 1 representing the FAILURE rate.
+- If "rate" is 0 (or 0.0), it means ZERO requests failed — the test PASSED.
+- If "rate" is greater than 0, it means some requests failed — the test FAILED.
+- The "passes" and "fails" keys inside "values" refer to the number of times the rate metric was evaluated, NOT the number of HTTP requests that succeeded or failed. Do not use them for pass/fail.
 
-Here is the JSON data to analyze: ${resultsJson}`;
+Follow these rules:
+1. Start with: "Conclusion: The test passed successfully." or "Conclusion: The test failed."
+2. Report the requests per second from http_reqs → values → rate.
+3. Report the 95th percentile response time from http_req_duration → values → "p(95)".
+
+Here is the JSON data: ${resultsJson}`;
 }
 
 function buildComprehensiveAnalysisPrompt(resultsJson) {
-    return `Provide a comprehensive analysis of this k6 performance test result, covering:
+    return `You are a performance testing expert. Analyze the following k6 JSON summary and provide a comprehensive analysis.
+
+CRITICAL INSTRUCTION — Pass/Fail determination:
+The JSON contains a metric called "http_req_failed". Look at its "values" object and find the "rate" key.
+- "rate" is a decimal between 0 and 1 representing the FAILURE rate.
+- If "rate" is 0 (or 0.0), the error rate is 0% and the test PASSED.
+- If "rate" is greater than 0 (e.g. 0.25 = 25% failure rate), the test FAILED.
+- Do NOT use "passes" or "fails" keys inside "values" to count HTTP successes/failures. They are internal rate-metric counters, not request counts.
+- The total HTTP request count is found at http_reqs → values → count.
+
+Provide a comprehensive analysis covering:
 
 Test Overview & Configuration
 - Test duration, virtual user count, and execution strategy
-- Test completion status and overall success/failure assessment
+- Overall pass/fail verdict with the exact error rate percentage
 
-Core Performance Metrics Analysis
-- http_reqs: Total requests and request rate (RPS)
-- http_req_failed: Error rate percentage and absolute numbers
-- http_req_duration: Full breakdown including avg, min, max, p(90), p(95), p(99) percentiles
+Core Performance Metrics
+- http_reqs: total count and requests per second (values.rate)
+- http_req_failed: exact failure rate percentage (values.rate × 100)
+- http_req_duration: avg, min, max, p(90), p(95), p(99)
 
-Response Time Breakdown:
-- http_req_blocked: Time waiting for TCP connection slots
+Response Time Breakdown
+- http_req_blocked: time waiting for a TCP connection slot
 - http_req_connecting: TCP connection establishment time
-- http_req_tls_handshaking: TLS negotiation time (if applicable)
-- http_req_sending: Data transmission time to server
-- http_req_waiting: Time to first byte (TTFB)
-- http_req_receiving: Response data reception time
+- http_req_tls_handshaking: TLS negotiation time (if present)
+- http_req_sending: time to send data to the server
+- http_req_waiting: time to first byte (TTFB)
+- http_req_receiving: response download time
 
-System Resource & Load Analysis:
-- vus / vus_max: Virtual user counts throughout the test
-- iterations: Total completed iterations and iteration rate
-- data_received / data_sent: Transfer rates
+Load & Resource Analysis
+- vus / vus_max: virtual user utilization
+- iterations: total count and rate
+- data_received / data_sent: transfer volumes and rates
 
-Quality & Reliability Assessment:
-- checks: Success rate of assertions
-- Any failed checks with root cause analysis
+Quality Assessment
+- checks: pass rate of assertions (if present in the JSON)
 
-Performance Bottleneck Identification:
-- Slowest components in the request lifecycle
-- Response time percentile outliers
-- Network vs. server-side performance
+Performance Bottleneck Identification
+- Slowest lifecycle component
+- Percentile spread (gap between p(90) and p(99) indicates tail latency issues)
 
-Business Impact & Recommendations:
-- Performance against standard industry SLA criteria
-- Scalability insights
-- Specific optimization recommendations
-- Threshold suggestions for future tests
+Recommendations
+- Comparison against industry SLA standards (p(95) < 500ms, error rate < 1%)
+- Specific optimization suggestions
+- Suggested threshold values for future test runs
 
-Format with clear sections. Do not return raw markdown — use plain text with spacing.
+Format with clear section headers. Use plain text, not markdown.
 
-Here is the JSON data to analyze: ${resultsJson}`;
+Here is the JSON data: ${resultsJson}`;
 }
 
 // --- Helpers ---
@@ -127,17 +198,26 @@ function cleanupFiles(...filePaths) {
 
 // --- Routes ---
 
+app.get('/models', (req, res) => {
+    const models = Object.entries(SUPPORTED_MODELS)
+        .filter(([id]) => isModelAvailable(id))
+        .map(([id, meta]) => ({
+            id,
+            label: meta.label,
+            description: meta.description,
+            isDefault: id === DEFAULT_MODEL,
+        }));
+    res.json({ models });
+});
+
 app.post('/generate-script', async (req, res) => {
     const { prompt, model: modelId } = req.body;
     if (!prompt || !prompt.trim()) {
         return res.status(400).json({ error: 'A test description is required.' });
     }
 
-    const model = getModel(modelId);
-
     try {
-        const result = await model.generateContent(buildScriptPrompt(prompt));
-        const k6Script = result.response.text();
+        const k6Script = await generateText(modelId || DEFAULT_MODEL, buildScriptPrompt(prompt));
 
         if (!isValidK6Script(k6Script)) {
             console.error('AI generated an invalid script.');
@@ -185,11 +265,9 @@ app.post('/analyze-results', async (req, res) => {
         return res.status(400).json({ error: 'No test results provided.' });
     }
 
-    const model = getModel(modelId);
-
     try {
-        const result = await model.generateContent(buildSimpleAnalysisPrompt(JSON.stringify(results)));
-        res.json({ analysis: result.response.text() });
+        const analysis = await generateText(modelId || DEFAULT_MODEL, buildSimpleAnalysisPrompt(JSON.stringify(results)));
+        res.json({ analysis });
     } catch (error) {
         console.error('Analysis error:', error);
         res.status(500).json({ error: 'Failed to analyze results.', details: error.message });
@@ -202,25 +280,13 @@ app.post('/comprehensive-results-analysis', async (req, res) => {
         return res.status(400).json({ error: 'No test results provided.' });
     }
 
-    const model = getModel(modelId);
-
     try {
-        const result = await model.generateContent(buildComprehensiveAnalysisPrompt(JSON.stringify(results)));
-        res.json({ analysis: result.response.text() });
+        const analysis = await generateText(modelId || DEFAULT_MODEL, buildComprehensiveAnalysisPrompt(JSON.stringify(results)));
+        res.json({ analysis });
     } catch (error) {
         console.error('Comprehensive analysis error:', error);
         res.status(500).json({ error: 'Failed to generate comprehensive analysis.', details: error.message });
     }
-});
-
-app.get('/models', (req, res) => {
-    const models = Object.entries(SUPPORTED_MODELS).map(([id, meta]) => ({
-        id,
-        label: meta.label,
-        description: meta.description,
-        isDefault: id === DEFAULT_MODEL,
-    }));
-    res.json({ models });
 });
 
 app.listen(PORT, () => {

@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const util = require('util');
 
 const execPromise = util.promisify(exec);
@@ -14,26 +15,83 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const TEMP_DIR = path.join(__dirname, 'temp');
 
-// Initialize the AI client once at startup
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+if (!fs.existsSync(TEMP_DIR)) {
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
+
+// --- Provider clients (initialized once at startup) ---
+
+const googleClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const groqClient = process.env.GROQ_API_KEY
+    ? new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' })
+    : null;
+
+const openRouterClient = process.env.OPENROUTER_API_KEY
+    ? new OpenAI({ apiKey: process.env.OPENROUTER_API_KEY, baseURL: 'https://openrouter.ai/api/v1' })
+    : null;
+
+const ollamaClient = new OpenAI({
+    apiKey: 'ollama',
+    baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+});
+
+// --- Model registry ---
 
 const SUPPORTED_MODELS = {
-    'gemini-2.0-flash':     { label: 'Gemini 2.0 Flash',    description: 'Fast and efficient' },
-    'gemini-2.5-flash':     { label: 'Gemini 2.5 Flash',    description: 'Latest flash model' },
-    'gemini-2.5-pro':       { label: 'Gemini 2.5 Pro',      description: 'Most capable, slower' },
-    'gemini-1.5-flash':     { label: 'Gemini 1.5 Flash',    description: 'Stable and fast' },
-    'gemini-1.5-pro':       { label: 'Gemini 1.5 Pro',      description: 'Stable, high quality' },
+    // Google Gemini
+    'gemini-2.0-flash': { provider: 'google',      apiModel: 'gemini-2.0-flash',                              label: 'Gemini 2.0 Flash',      description: 'Google · Fast & capable',      requiresKey: 'GEMINI_API_KEY' },
+    'gemini-2.5-flash': { provider: 'google',      apiModel: 'gemini-2.5-flash',                              label: 'Gemini 2.5 Flash',      description: 'Google · Latest flash',        requiresKey: 'GEMINI_API_KEY' },
+    'gemini-2.5-pro':   { provider: 'google',      apiModel: 'gemini-2.5-pro',                                label: 'Gemini 2.5 Pro',        description: 'Google · Most capable',        requiresKey: 'GEMINI_API_KEY' },
+    'gemini-1.5-flash': { provider: 'google',      apiModel: 'gemini-1.5-flash',                              label: 'Gemini 1.5 Flash',      description: 'Google · Stable & fast',       requiresKey: 'GEMINI_API_KEY' },
+    'gemini-1.5-pro':   { provider: 'google',      apiModel: 'gemini-1.5-pro',                                label: 'Gemini 1.5 Pro',        description: 'Google · Stable, high quality',requiresKey: 'GEMINI_API_KEY' },
+
+    // Groq (free tier)
+    'groq/llama-3.3-70b': { provider: 'groq',      apiModel: 'llama-3.3-70b-versatile',                      label: 'Llama 3.3 70B',         description: 'Groq · Free · Very fast',      requiresKey: 'GROQ_API_KEY' },
+    'groq/llama-3.1-8b':  { provider: 'groq',      apiModel: 'llama-3.1-8b-instant',                         label: 'Llama 3.1 8B',          description: 'Groq · Free · Fastest',        requiresKey: 'GROQ_API_KEY' },
+    'groq/gemma2-9b':     { provider: 'groq',      apiModel: 'gemma2-9b-it',                                  label: 'Gemma 2 9B',            description: 'Groq · Free · Google model',   requiresKey: 'GROQ_API_KEY' },
+
+    // OpenRouter (free models)
+    'openrouter/llama-3.1-8b': { provider: 'openrouter', apiModel: 'meta-llama/llama-3.1-8b-instruct:free',  label: 'Llama 3.1 8B',          description: 'OpenRouter · Free',            requiresKey: 'OPENROUTER_API_KEY' },
+    'openrouter/mistral-7b':   { provider: 'openrouter', apiModel: 'mistralai/mistral-7b-instruct:free',     label: 'Mistral 7B',            description: 'OpenRouter · Free',            requiresKey: 'OPENROUTER_API_KEY' },
+
+    // Ollama (fully local — no key needed)
+    'ollama/llama3':    { provider: 'ollama', apiModel: 'llama3',    label: 'Llama 3 (Local)',    description: 'Ollama · Free · Local',        requiresKey: null },
+    'ollama/codellama': { provider: 'ollama', apiModel: 'codellama', label: 'CodeLlama (Local)', description: 'Ollama · Free · Code-focused', requiresKey: null },
+    'ollama/mistral':   { provider: 'ollama', apiModel: 'mistral',   label: 'Mistral (Local)',   description: 'Ollama · Free · Local',        requiresKey: null },
 };
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
-function getModel(modelId) {
-    const id = SUPPORTED_MODELS[modelId] ? modelId : DEFAULT_MODEL;
-    return genAI.getGenerativeModel({ model: id });
+function isModelAvailable(modelId) {
+    const config = SUPPORTED_MODELS[modelId];
+    if (!config) return false;
+    if (!config.requiresKey) return true;
+    return !!process.env[config.requiresKey];
 }
 
-if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
+async function generateText(modelId, prompt) {
+    const config = SUPPORTED_MODELS[modelId] || SUPPORTED_MODELS[DEFAULT_MODEL];
+
+    if (config.provider === 'google') {
+        const model = googleClient.getGenerativeModel({ model: config.apiModel });
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+    }
+
+    const clients = { groq: groqClient, openrouter: openRouterClient, ollama: ollamaClient };
+    const client = clients[config.provider];
+
+    if (!client) {
+        throw new Error(`Provider '${config.provider}' is not configured. Add the required API key to your .env file.`);
+    }
+
+    const result = await client.chat.completions.create({
+        model: config.apiModel,
+        messages: [{ role: 'user', content: prompt }],
+    });
+
+    return result.choices[0].message.content;
 }
 
 app.use(express.json());
@@ -127,17 +185,26 @@ function cleanupFiles(...filePaths) {
 
 // --- Routes ---
 
+app.get('/models', (req, res) => {
+    const models = Object.entries(SUPPORTED_MODELS)
+        .filter(([id]) => isModelAvailable(id))
+        .map(([id, meta]) => ({
+            id,
+            label: meta.label,
+            description: meta.description,
+            isDefault: id === DEFAULT_MODEL,
+        }));
+    res.json({ models });
+});
+
 app.post('/generate-script', async (req, res) => {
     const { prompt, model: modelId } = req.body;
     if (!prompt || !prompt.trim()) {
         return res.status(400).json({ error: 'A test description is required.' });
     }
 
-    const model = getModel(modelId);
-
     try {
-        const result = await model.generateContent(buildScriptPrompt(prompt));
-        const k6Script = result.response.text();
+        const k6Script = await generateText(modelId || DEFAULT_MODEL, buildScriptPrompt(prompt));
 
         if (!isValidK6Script(k6Script)) {
             console.error('AI generated an invalid script.');
@@ -185,11 +252,9 @@ app.post('/analyze-results', async (req, res) => {
         return res.status(400).json({ error: 'No test results provided.' });
     }
 
-    const model = getModel(modelId);
-
     try {
-        const result = await model.generateContent(buildSimpleAnalysisPrompt(JSON.stringify(results)));
-        res.json({ analysis: result.response.text() });
+        const analysis = await generateText(modelId || DEFAULT_MODEL, buildSimpleAnalysisPrompt(JSON.stringify(results)));
+        res.json({ analysis });
     } catch (error) {
         console.error('Analysis error:', error);
         res.status(500).json({ error: 'Failed to analyze results.', details: error.message });
@@ -202,25 +267,13 @@ app.post('/comprehensive-results-analysis', async (req, res) => {
         return res.status(400).json({ error: 'No test results provided.' });
     }
 
-    const model = getModel(modelId);
-
     try {
-        const result = await model.generateContent(buildComprehensiveAnalysisPrompt(JSON.stringify(results)));
-        res.json({ analysis: result.response.text() });
+        const analysis = await generateText(modelId || DEFAULT_MODEL, buildComprehensiveAnalysisPrompt(JSON.stringify(results)));
+        res.json({ analysis });
     } catch (error) {
         console.error('Comprehensive analysis error:', error);
         res.status(500).json({ error: 'Failed to generate comprehensive analysis.', details: error.message });
     }
-});
-
-app.get('/models', (req, res) => {
-    const models = Object.entries(SUPPORTED_MODELS).map(([id, meta]) => ({
-        id,
-        label: meta.label,
-        description: meta.description,
-        isDefault: id === DEFAULT_MODEL,
-    }));
-    res.json({ models });
 });
 
 app.listen(PORT, () => {

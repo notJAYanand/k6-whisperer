@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>k6 Whisperer — AI-Powered Load Testing</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <header>
@@ -22,6 +23,11 @@
                 <button class="chip" onclick="setPrompt('stress-ramp')">Stress with Ramp-Up</button>
                 <button class="chip" onclick="setPrompt('post-checks')">POST with Checks</button>
                 <button class="chip" onclick="setPrompt('thresholds')">With Thresholds</button>
+            </div>
+            <div class="model-selector">
+                <span class="label">Model:</span>
+                <select id="modelSelect"><option value="">Loading...</option></select>
+                <span id="modelDescription" class="model-description"></span>
             </div>
             <div class="actions">
                 <button class="btn btn-primary" id="generateBtn" onclick="generateScript()">Generate Script</button>
@@ -45,6 +51,20 @@
         <section class="card" id="resultsSection" hidden>
             <h2>3. Results</h2>
             <div class="results-status" id="resultsStatus"></div>
+
+            <div class="metric-cards" id="metricCards"></div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>Response Time Percentiles</h3>
+                    <canvas id="percentileChart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Request Lifecycle (avg ms)</h3>
+                    <canvas id="lifecycleChart"></canvas>
+                </div>
+            </div>
+
             <details>
                 <summary>Raw k6 Output</summary>
                 <pre id="rawOutput"></pre>
@@ -64,17 +84,6 @@
                     <button class="btn btn-secondary" id="getComprehensiveAnalysisBtn" onclick="getComprehensiveAnalysis()">Get Comprehensive Analysis</button>
                 </div>
                 <div id="comprehensiveAnalysis" class="analysis-content"></div>
-            </div>
-        </section>
-
-        <section class="card" id="modelSection">
-            <h2>Model Selection</h2>
-            <div class="model-selector">
-                <label class="label" for="modelSelect">Model:</label>
-                <select id="modelSelect">
-                    <option value="">Loading models...</option>
-                </select>
-                <span id="modelDescription" class="model-description"></span>
             </div>
         </section>
     </main>
